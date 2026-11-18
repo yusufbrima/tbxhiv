@@ -1,0 +1,66 @@
+# EHR-only baseline (all EHR feature groups) on the MIMIC subset.
+# Switch target: tbmxai run configs/mimic/tabular_xgb.yaml -p target=label_tb
+name: mimic_ehr_xgb_${target}     # run folders per target
+seed: 42
+paths:
+  subset: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+  target: ${TARGET:-label_pneumonia}   # label_pneumonia | label_tb | label_pulmonary_tb | label_hiv_pneumonia | label_chexpert_pneumonia | ...
+output_dir: ${output_root}
+
+data:
+  dataset: ${subset}                  # standard dataset written by `tbmxai mimic build` (dataset.yaml)
+  label_column: ${target}
+  use: [tabular, images]              # one sample per frontal image for every model; add `reports` with care
+                                      # (reports describe the image: report-derived targets would leak)
+
+# Shared protocol (same samples, patient-level split and XAI set for every compared model).
+# Built by scripts/mimic/04c_protocol.sh; empty = this config's own split.
+protocol:
+  path: "${TBMXAI_PROTOCOL:-}"
+
+view:
+  modalities: [tabular]
+  metadata_columns: [sex, age_group, race, insurance, hiv_prior, encounter_type, official_split, dev_split, year_group]
+  index_policy: all                   # all | first | last | random — one prediction timepoint per patient
+  index_time_column: study_time       # prediction timepoint = CXR time (features use only data before it)
+
+split:                                # shared MIMIC patient split (selection/dev_split.csv):
+  name: predefined                    # the same test patients for every model, and never seen
+  params: {column: dev_split}         # by supervised pretraining (tbmxai pretrain)
+  # Temporal validation instead (year_group is shifted per patient but era-preserving):
+  # name: temporal
+  # params: {column: year_group, val_start: "2014 - 2016", test_start: "2017 - 2019", strict: true}
+
+model:
+  name: xgboost
+  params: {n_estimators: 600, max_depth: 5, learning_rate: 0.03}
+
+evaluation: {n_bootstrap: 1000}
+subgroups:
+  columns: [sex, age_group, race, hiv_prior, encounter_type]
+  min_size: 30
+explain:
+  methods:
+    # permutation importance over 2,253 features took ~3 h per run; SHAP covers importance
+    - {name: shap}                    # exact TreeSHAP, every class output, per true class
+  samples: {split: test, n_per_class: 8}
+reporting: {writers: [json, tables, markdown, html], table_format: both}
+
+
+# Hyperparameter search (scripts/mimic/05b_tune_ehr.sh): trials train on dev_split train and are
+# scored on dev_split val only; the test patients are used once, after refitting the best setting.
+tuning:
+  enabled: false
+  n_trials: 30
+  timeout_minutes: 120
+  metric: auroc
+  sampler: tpe
+  search_space:
+    model.params.n_estimators:     {type: int, low: 200, high: 1200, step: 100}
+    model.params.max_depth:        {type: int, low: 3, high: 8}
+    model.params.learning_rate:    {type: float, low: 0.01, high: 0.2, log: true}
+    model.params.subsample:        {type: float, low: 0.6, high: 1.0}
+    model.params.colsample_bytree: {type: float, low: 0.3, high: 1.0}
+    model.params.min_child_weight: {type: float, low: 1.0, high: 20.0, log: true}
+    model.params.reg_lambda:       {type: float, low: 0.1, high: 20.0, log: true}

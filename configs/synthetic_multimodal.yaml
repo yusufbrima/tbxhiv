@@ -1,0 +1,69 @@
+# Multimodal CXR + EHR network with configurable fusion.
+# fusion.name: concat | gated | bilinear | attention | cross_attention | late
+name: synthetic_multimodal_xattn
+seed: 42
+
+paths:
+  data_root: ${TBMXAI_DATA_ROOT:-~/tbmxai_data/synthetic}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+output_dir: ${output_root}
+
+data:
+  label_column: tb_status
+  class_names: [non-TB, TB]
+  sources:
+    - name: tabular_file
+      params: {path: "${data_root}/ehr.csv", key_column: pid}
+    - name: cxr_manifest              # several images per patient → one sample per image
+      params:
+        path: ${data_root}/cxr_manifest.csv
+        key_column: pid
+        path_column: path
+        image_root: ${data_root}/images
+        metadata_columns: [view]
+    - name: report_file               # ingested; add a `text` encoder to use it
+      params: {path: "${data_root}/reports.csv", key_column: pid, text_column: report}
+
+view:
+  modalities: [imaging, tabular]
+  tabular_columns: [age, sex, hiv_status, cough_weeks, weight_loss, crp, cd4]
+  metadata_columns: [sex, hiv_status, age, view]
+
+split:
+  name: kfold                         # patient-grouped stratified CV; run fold=0..4
+  params: {n_splits: 5, fold: 0, val_size: 0.15}
+
+model:
+  name: neural
+  params:
+    encoders:
+      imaging:
+        name: timm_vision
+        params: {backbone: convnext_tiny, pretrained: true}
+      tabular:
+        name: ft_transformer          # or mlp_tabular
+        params: {d_token: 64, n_layers: 2, n_heads: 4}
+      # text:
+      #   name: hf_text
+      #   params: {model_name: emilyalsentzer/Bio_ClinicalBERT, pretrained: true, freeze: true}
+    fusion:
+      name: cross_attention
+      params: {query: tabular, dim: 256, n_heads: 4}
+    head: {hidden_dims: [128], dropout: 0.2}
+    image: {size: 224, augment: true, in_chans: 1}
+
+training:
+  epochs: 40
+  batch_size: 32
+  precision: bf16-mixed
+  optimizer: {name: adamw, lr: 2.0e-4, encoder_lr_mult: 0.1}
+  scheduler: {name: cosine, warmup_epochs: 3}
+  early_stopping: {monitor: val_auroc, patience: 8}
+  checkpoint: {save_top_k: 2}
+
+evaluation:
+  n_bootstrap: 1000
+
+subgroups:
+  columns: [sex, hiv_status, age]
+  bins: {age: [0, 30, 45, 120]}

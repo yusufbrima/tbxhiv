@@ -1,0 +1,115 @@
+
+[project]
+name = "tbmxai"
+version = "0.1.0"
+description = "Multimodal deep learning for TB/HIV-associated pneumonia detection"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    # Deep learning and GPU
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "lightning",
+    "torchmetrics",
+    "timm",
+    "monai",
+    "accelerate",
+    "einops",
+    # Medical imaging and image processing
+    "albumentations",
+    "opencv-python-headless",
+    "pillow",
+    "pydicom",
+    "h5py",
+    # Multimodal learning and NLP
+    "transformers",
+    "tokenizers",
+    "sentencepiece",
+    "safetensors",
+    "open-clip-torch",
+    # Scientific computing
+    "numpy",
+    "scipy",
+    "pandas",
+    "polars",
+    "pyarrow",
+    "duckdb",
+    # Classical machine learning and statistics
+    "scikit-learn",
+    "imbalanced-learn",
+    "xgboost",
+    "statsmodels",
+    # Explainability
+    "captum",
+    "grad-cam",
+    "shap",
+    # Visualization
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    # Experiment management
+    "wandb",
+    "tensorboard",
+    "hydra-core",
+    "pyyaml",
+    # Development and notebooks
+    "jupyterlab",
+    "ipykernel",
+    "tqdm",
+    "rich",
+    # Configuration and CLI
+    "pydantic>=2.7",
+    "typer>=0.12",
+    "physionet>=0.3.0",
+    "optuna>=4",
+    "torchxrayvision>=1.5.7",
+]
+
+[project.scripts]
+tbmxai = "tbmxai.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "pre-commit",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+# PyTorch CUDA 12.6 package repository (runs on NVIDIA driver >= 525)
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+# Only PyTorch packages use the CUDA-specific index.
+# All other packages resolve from the default PyPI index.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # unicode arrows/dashes in prose are intentional
+    "RUF022",
+    "UP046",  # keep Generic[T] for readability
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"src/tbmxai/reporting/html.py" = ["E501"]     # HTML/CSS template strings
+"src/tbmxai/reporting/figures.py" = ["E501"]  # plotting calls
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

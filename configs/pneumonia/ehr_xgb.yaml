@@ -1,0 +1,48 @@
+# EHR XGBoost, tuned settings.
+# Dataset = the index-film cohort (scripts/cohort/build_index_cohort.py): one presentation film per
+# encounter; target label_cap (community-onset pneumonia). Run with TBMXAI_MIMIC_OUT pointing at it.
+name: pneumonia_ehr_xgb_${target}
+seed: 42
+paths:
+  subset: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+  target: ${TARGET:-label_cap}
+output_dir: ${output_root}
+
+data:
+  dataset: ${subset}                  # standard dataset written by `tbmxai mimic build` (dataset.yaml)
+  label_column: ${target}
+  use: [tabular, images]              # one sample per frontal image for every model; add `reports` with care
+                                      # (reports describe the image: report-derived targets would leak)
+
+
+view:
+  modalities: [tabular]
+  metadata_columns: [sex, age_group, race, insurance, hiv_prior, label_hiv, encounter_type, dev_split, ed_presentation, index_view, icu_at_film, hours_from_presentation]
+  index_policy: all                   # all | first | last | random — one prediction timepoint per patient
+  index_time_column: study_time       # prediction timepoint = CXR time (features use only data before it)
+
+split:                                # shared MIMIC patient split (selection/dev_split.csv):
+  name: predefined                    # the same test patients for every model, and never seen
+  params: {column: dev_split}         # by supervised pretraining (tbmxai pretrain)
+  # Temporal validation instead (year_group is shifted per patient but era-preserving):
+  # name: temporal
+  # params: {column: year_group, val_start: "2014 - 2016", test_start: "2017 - 2019", strict: true}
+
+model:
+  name: xgboost
+  params: {n_estimators: 500, max_depth: 4, learning_rate: 0.0508, subsample: 0.656, colsample_bytree: 0.862,
+           min_child_weight: 1.25, reg_lambda: 18.66}   # tuned on dev_split val (mimic_ehr_tuned, 30 trials)
+
+evaluation: {n_bootstrap: 1000}
+subgroups:
+  columns: [sex, age_group, encounter_type, ed_presentation, index_view, icu_at_film]
+  min_size: 30
+explain:
+  methods:
+    # permutation importance over 2,253 features took ~3 h per run; SHAP covers importance
+    - {name: shap}                    # exact TreeSHAP, every class output, per true class
+  samples: {split: test, n_per_class: 8}
+reporting: {writers: [json, tables, markdown, html], table_format: both}
+
+

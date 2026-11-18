@@ -1,0 +1,52 @@
+# The FULL eligible MIMIC population (every patient with a frontal CXR in an admission or ED stay).
+# The 20,000 patients of the development sample (configs/mimic/build.yaml, on which the image
+# encoder was pretrained) keep their train / val / test assignment (dev_split.inherit_from); only new
+# patients are split, so the MIMIC-pretrained encoder never saw a patient of the new test set.
+# Run with TBMXAI_MIMIC_OUT=~/data/tbmxai/mimic_full MIMIC_N_PATIENTS=100000 (scripts/mimic/full.sh).
+# MIMIC-IV + MIMIC-IV-ED + MIMIC-CXR-JPG (+ reports) → tbmxai development subset.
+# Locations come from scripts/mimic/env.sh (or your environment); nothing lives in the repo.
+paths:
+  mimic_dir: ${MIMIC_DIR:-~/data/physionet}
+  out_dir: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+
+output_dir: ${out_dir}
+
+sources:
+  mimic_iv: ${mimic_dir}/mimiciv/${MIMIC_IV_VERSION:-3.1}
+  mimic_iv_ed: ${mimic_dir}/mimic-iv-ed/${MIMIC_IV_ED_VERSION:-2.2}
+  mimic_cxr_jpg: ${mimic_dir}/mimic-cxr-jpg/${MIMIC_CXR_JPG_VERSION:-2.1.0}
+  mimic_cxr_reports: ${mimic_dir}/mimic-cxr/${MIMIC_CXR_VERSION:-2.1.0}/mimic-cxr-reports.zip
+
+cxr_jpg_project: mimic-cxr-jpg/${MIMIC_CXR_JPG_VERSION:-2.1.0}
+
+selection:
+  n_patients: ${MIMIC_N_PATIENTS:-5000}
+  seed: 42
+  views: [PA, AP]                  # frontal only
+  one_image_per_study: false
+  max_studies_per_patient: null
+  require_encounter: true          # study must fall in an admission or ED stay
+  enrich_labels: [tb_episode, tb, hiv_pneumonia]   # all rare positives are kept (changes prevalence)
+  dev_split:                       # keep the development sample's assignments
+    inherit_from: ~/data/tbmxai/mimic_subset/selection/dev_split.csv
+
+# Targets (all are written; pick one per experiment via `target`).
+# Defaults are built in; override or add here, e.g.:
+# labels:
+#   bacterial_pneumonia: {icd9: ["482"], icd10: ["J13", "J14", "J15"]}
+
+# EHR feature groups (all enabled). Remove a key to disable; tune params per group.
+features:
+  demographics: {}
+  encounter: {}
+  history: {}
+  labs:               {lookback_hours: 48, min_coverage: 0.02, aggregations: [last, min, max, mean, count]}
+  ed_triage:          {lookback_hours: 72, complaint_top_n: 50}
+  ed_vitals:          {lookback_hours: 24, min_coverage: 0.02}
+  icu_charts:         {lookback_hours: 24, min_coverage: 0.05}
+  omr:                {lookback_days: 365}
+  medications:        {lookback_hours: 72, top_n: 100}
+  microbiology_orders: {lookback_hours: 72, top_n: 50}   # orders only; remove for "CXR triage" setting
+  care_unit: {}                       # ward / care unit at CXR time (transfers)
+  service: {}                         # clinical service at CXR time (services)
+  procedure_history: {top_n: 50}      # procedures from previous admissions only

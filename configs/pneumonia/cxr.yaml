@@ -1,0 +1,55 @@
+# chest X-ray only, ConvNeXt-T from MIMIC CheXpert pretraining (test patients unseen in pretraining: inherited split).
+# Dataset = the index-film cohort (scripts/cohort/build_index_cohort.py): one presentation film per
+# encounter; target label_cap (community-onset pneumonia). Run with TBMXAI_MIMIC_OUT pointing at it.
+name: pneumonia_cxr_${target}
+seed: 42
+paths:
+  subset: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+  pretrain_root: ${TBMXAI_PRETRAIN:-~/tbmxai_runs/pretrain}
+  image_cache: ${TBMXAI_IMAGE_CACHE:-~/data/tbmxai/cxr_cache}
+  target: ${TARGET:-label_cap}
+output_dir: ${output_root}
+
+data:
+  dataset: ${subset}                  # standard dataset written by `tbmxai mimic build` (dataset.yaml)
+  label_column: ${target}
+  use: [tabular, images]              # one sample per frontal image for every model; add `reports` with care
+                                      # (reports describe the image: report-derived targets would leak)
+
+
+view:
+  modalities: [imaging]
+  metadata_columns: [sex, age_group, race, insurance, hiv_prior, label_hiv, encounter_type, dev_split, ed_presentation, index_view, icu_at_film, hours_from_presentation]
+
+split: {name: predefined, params: {column: dev_split}}   # shared patients; test unseen by pretraining
+
+model:
+  name: neural
+  params:
+    encoders:
+      imaging:
+        name: timm_vision
+        params: {backbone: convnext_tiny, pretrained: false, checkpoint: "${pretrain_root}/mimic_chexpert_convnext_tiny/backbone.pt", drop_rate: 0.2}
+    head: {dropout: 0.2}
+    image: {size: 320, augment: true, in_chans: 1, cache_dir: "${image_cache}", cache_size: 512}
+
+training:
+  epochs: 12
+  batch_size: 32
+  num_workers: 4
+  precision: bf16-mixed
+  optimizer: {name: adamw, lr: 3.0e-4, weight_decay: 0.01, encoder_lr_mult: 0.3}
+  scheduler: {name: cosine, warmup_epochs: 1, min_lr_ratio: 0.01}
+  early_stopping: {monitor: val_auroc, patience: 3}
+  checkpoint: {save_top_k: 1, save_last: true}
+
+explain:
+  methods:
+    - {name: grad_cam}
+  samples: {split: test, n_per_class: 8}   # ground-truth stratified: every class, same patients for all models
+  target_classes: all                      # explain every class output
+
+evaluation: {n_bootstrap: 1000}
+subgroups: {columns: [sex, age_group, encounter_type, ed_presentation, index_view, icu_at_film], min_size: 30}
+reporting: {writers: [json, tables, markdown, html], table_format: both}

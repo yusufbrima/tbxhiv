@@ -1,0 +1,35 @@
+# Supervised multi-label pretraining on MIMIC-CXR (20,000-patient selection, 14 CheXpert findings).
+# Run: bash scripts/mimic/06_pretrain.sh convnext_tiny   → ${output_root}/pretrain/mimic_chexpert_convnext_tiny/backbone.pt
+# Use the result in any experiment:
+#   encoders: {imaging: {name: timm_vision, params: {backbone: convnext_tiny, pretrained: false,
+#              checkpoint: ~/tbmxai_runs/pretrain/mimic_chexpert_convnext_tiny/backbone.pt}}}
+name: mimic_chexpert_convnext_tiny
+seed: 42
+paths:
+  mimic_dir: ${MIMIC_DIR:-~/data/physionet}
+  mimic_out: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+  image_cache: ${TBMXAI_IMAGE_CACHE:-~/data/tbmxai/cxr_cache}
+output_dir: ${output_root}/pretrain
+
+data:
+  selection_dir: ${mimic_out}/selection
+  image_root: ${mimic_dir}/mimic-cxr-jpg/${MIMIC_CXR_JPG_VERSION:-2.1.0}
+  chexpert: ${mimic_dir}/mimic-cxr-jpg/${MIMIC_CXR_JPG_VERSION:-2.1.0}/mimic-cxr-2.0.0-chexpert.csv.gz
+  uncertain: ignore            # CheXpert -1 masked out of the loss
+  blank: negative              # not mentioned in the report → negative
+  exclude_labels: [tb_episode] # MIMIC TB patients stay unseen (external TB test site later)
+  split: dev                   # shared patient split: train | val (early stop) | test never seen
+
+model: {backbone: convnext_tiny, pretrained: true, drop_rate: 0.1, in_chans: 1}
+image: {size: 320, augment: true, cache_dir: "${image_cache}", cache_size: 512}
+
+training:
+  epochs: 20
+  batch_size: 32
+  num_workers: 4
+  lr: 3.0e-4
+  weight_decay: 0.01
+  warmup_epochs: 1
+  precision: bf16-mixed
+  patience: 4

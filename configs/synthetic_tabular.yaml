@@ -1,0 +1,71 @@
+# Tabular (EHR + demographics) baseline.
+# Data and outputs can live anywhere; set roots via env vars or CLI flags:
+#   tbmxai synth ~/tbmxai_data/synthetic
+#   TBMXAI_DATA_ROOT=~/tbmxai_data/synthetic tbmxai run configs/synthetic_tabular.yaml
+#   tbmxai run configs/synthetic_tabular.yaml --data-root /data/tb --output-root /scratch/runs
+name: synthetic_tabular_xgb
+seed: 42
+
+paths:
+  data_root: ${TBMXAI_DATA_ROOT:-~/tbmxai_data/synthetic}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+output_dir: ${output_root}
+
+data:
+  patient_column: patient_id          # canonical patient id (splits are patient-level)
+  label_column: tb_status
+  class_names: [non-TB, TB]           # index 1 = positive class
+  sources:
+    - name: tabular_file
+      params:
+        path: ${data_root}/ehr.csv
+        key_column: pid               # the id column as named in this file
+
+view:
+  modalities: [tabular]
+  tabular_columns: [age, sex, hiv_status, cough_weeks, weight_loss, crp, cd4]
+  metadata_columns: [sex, hiv_status, age]
+
+split:
+  name: holdout                       # holdout | kfold | predefined (all patient-level)
+  params: {val_size: 0.15, test_size: 0.25, stratify: true}
+
+model:
+  name: xgboost                       # logistic_regression | random_forest | xgboost | neural
+  params: {n_estimators: 200, max_depth: 3}
+
+evaluation:
+  metrics: null                       # null = full default suite
+  threshold: 0.5
+  n_bootstrap: 1000
+  confidence: 0.95
+  splits: [val, test]
+
+subgroups:
+  columns: [sex, hiv_status, age]
+  min_size: 15
+  bins: {age: [0, 30, 45, 120]}
+
+explain:
+  methods:
+    - name: permutation_importance
+      params: {n_repeats: 5}
+
+reporting:
+  writers: [json, tables, markdown, html]
+  table_format: csv                   # csv | parquet | both
+
+# Hyper-parameter optimisation (Optuna). `tbmxai run` ignores it while enabled: false;
+# `tbmxai tune <config>` turns it on. Trials are scored on the validation split only.
+tuning:
+  enabled: false
+  n_trials: 40
+  metric: auroc                 # any registered metric; direction inferred
+  sampler: tpe                  # tpe | random | qmc | gp | cmaes
+  pruner: median                # none | median | hyperband | successive_halving
+  search_space:                 # dotted paths into this config
+    model.params.max_depth:        {type: int, low: 2, high: 8}
+    model.params.learning_rate:    {type: float, low: 0.005, high: 0.3, log: true}
+    model.params.n_estimators:     {type: int, low: 100, high: 800, step: 50}
+    model.params.subsample:        {type: float, low: 0.5, high: 1.0}
+    model.params.colsample_bytree: {type: float, low: 0.3, high: 1.0}

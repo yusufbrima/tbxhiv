@@ -1,0 +1,57 @@
+# CXR-only neural model. Swap `backbone` for any CNN / hybrid / transformer
+# (see `tbmxai backbones`) and `pretrained` to train from scratch or fine-tune.
+name: synthetic_cxr_densenet
+seed: 42
+
+paths:
+  data_root: ${TBMXAI_DATA_ROOT:-~/tbmxai_data/synthetic}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+output_dir: ${output_root}
+
+data:
+  label_column: tb_status
+  class_names: [non-TB, TB]
+  sources:
+    - name: tabular_file              # label (+ demographics for subgroups only)
+      params: {path: "${data_root}/ehr.csv", key_column: pid, feature_columns: []}
+      # feature_columns: [] → nothing from this file is a model input
+    - name: cxr_manifest
+      params:
+        path: ${data_root}/cxr_manifest.csv
+        key_column: pid
+        path_column: path
+        image_root: ${data_root}/images
+
+view:
+  modalities: [imaging]
+
+split:
+  name: holdout
+  params: {val_size: 0.15, test_size: 0.25}
+
+model:
+  name: neural
+  params:
+    encoders:
+      imaging:
+        name: timm_vision
+        params: {backbone: densenet121, pretrained: true, drop_rate: 0.2}
+    head: {hidden_dims: [], dropout: 0.2}
+    image: {size: 224, augment: true, in_chans: 1}
+
+training:
+  epochs: 30
+  batch_size: 32
+  num_workers: 4
+  device: auto
+  precision: 16-mixed
+  grad_clip_norm: 1.0
+  accumulate_grad_batches: 1
+  class_weights: balanced
+  optimizer: {name: adamw, lr: 3.0e-4, weight_decay: 0.01, encoder_lr_mult: 0.1}
+  scheduler: {name: cosine, warmup_epochs: 2, warmup_start_factor: 0.01, min_lr_ratio: 0.01}
+  early_stopping: {enabled: true, monitor: val_auroc, patience: 7}
+  checkpoint: {enabled: true, save_top_k: 1, save_last: true, restore_best: true}
+
+evaluation:
+  n_bootstrap: 1000
