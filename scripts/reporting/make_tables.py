@@ -124,18 +124,6 @@ def gains(info: dict) -> str:
     rows.append(
         f"   & EHR, no workup $-$ EHR, all & {ci(r['diff'], r.lower, r.upper)} & {pval(r.p)} & -- \\\\"
     )
-    rep = A / "report_comparisons.csv"
-    if rep.exists():
-        rows.append("  \\midrule")
-        names = {"ehr": "EHR", "stack": "Stacked", "stack_rep": "EHR + report",
-                 "stack_all": "EHR + CXR + report"}  # fmt: skip
-        for i, (_, r) in enumerate(pd.read_csv(rep).iterrows()):
-            if (r.a, r.b) == ("ehr", "stack"):
-                continue  # already above
-            rows.append(
-                f"  {'Report comparator' if i == 0 else ''} & {names[r.b]} $-$ {names[r.a]} & "
-                f"{ci(r['diff'], r.lower, r.upper)} & {pval(r.p)} & -- \\\\"
-            )
     rows.append("  \\midrule")
     for i, (_, r) in enumerate(hiv.iterrows()):
         rows.append(
@@ -150,9 +138,7 @@ def gains(info: dict) -> str:
         "2,253 features), for the EHR, fusion and stacked models alike. MDD: minimal detectable "
         "difference at 80\\% power ($2.8 \\times$ the bootstrap standard error). HIV-positive contrasts "
         "B1--B3 were specified in advance; a difference counts if it is at least 0.02 with a CI "
-        "excluding zero. Report comparator: a model of the radiology report's findings and "
-        "impression, stacked in the same way; the report is written after the radiograph and is not "
-        "available at prediction time."
+        "excluding zero."
     )
     return table(
         cap,

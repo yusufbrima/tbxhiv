@@ -10,7 +10,7 @@ MIMIC-CXR, a label based on the principal diagnosis and antibiotic treatment, EH
 before each radiograph, and a patient-level split whose test patients were never seen by image
 pretraining. It contrasts a tuned XGBoost EHR model, a MIMIC-pretrained ConvNeXt-T image model, an
 end-to-end fusion network and a stacked model, with pre-specified interaction tests, a workup-feature
-ablation, an EHR-plus-report comparator and an HIV-positive subgroup analysis.
+ablation and an HIV-positive subgroup analysis.
 
 ## Install
 
@@ -44,7 +44,6 @@ every step and the EHR feature groups. Data default to `~/data`, runs to `~/tbmx
 | 8. EHR models, with and without workup features | `scripts/experiments/train_ehr.sh` |
 | 9. Image model, fusion, fusion without workup (3 seeds each) | `scripts/experiments/train_cxr_fusion.sh` |
 | 10. Main analysis | `uv run python scripts/analysis/main_analysis.py ~/tbmxai_runs/analysis/pneumonia ~/data/tbmxai/mimic_full_index ~/tbmxai_runs/pneumonia/{ehr_xgb,ehr_xgb_noworkup,cxr,fusion,fusion_noworkup}` |
-| 11. EHR-plus-report comparator | `uv run python scripts/analysis/report_comparator.py ~/tbmxai_runs/analysis/pneumonia ~/data/tbmxai/mimic_full_index ~/tbmxai_runs/pneumonia/ehr_xgb ~/tbmxai_runs/pneumonia/cxr` |
 
 Model settings are in `configs/pneumonia/` (EHR XGBoost, image model, fusion; the `_noworkup`
 variants drop the pre-specified workup features `micro_*`, `med_*`, `lab_*_count`, `svc_*`).
@@ -55,7 +54,6 @@ variants drop the pre-specified workup features `micro_*`, `med_*`, `lab_*_count
 | Paper | Source |
 |---|---|
 | Performance, paired differences, strata and interactions, HIV contrasts B1–B3 | `scripts/analysis/main_analysis.py` (`overall.csv`, `comparisons.csv`, `strata.csv`, `interactions.csv`, `hiv.csv`, `stacker.csv`, `calibration.csv`) |
-| EHR-plus-report comparator | `scripts/analysis/report_comparator.py` |
 | Tables (LaTeX) | `scripts/reporting/make_tables.py OUT_DIR` |
 | Calibration and decision-curve figure | `scripts/reporting/calibration_dca.py` on the recalibrated test predictions (`DCA_TMIN=0.01 DCA_TMAX=0.25`) |
 
