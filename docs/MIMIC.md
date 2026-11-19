@@ -216,6 +216,20 @@ Windows, aggregations and coverage thresholds can be set per group in `build.yam
 can be added by subclassing `tbmxai.datasets.mimic.FeatureGroup` and registering it in
 `FEATURE_GROUPS`.
 
+### Features available at film time
+
+`scripts/cohort/build_available_features.py` rebuilds the affected groups of the index-radiograph
+cohort so that each feature could have been known when the film was taken:
+
+- `lab`, `icu`: `available_only=True` keeps values charted before the film whose result was stored
+  before it (`storetime`, or `charttime` when `storetime` is missing).
+- `enc`: `at_study_time=True` treats a film taken before the admission time as an ED study, with no
+  admission attributes.
+- `demo`: `at_study_time=True` reads race and language from admissions that started before the film.
+
+`ed_presentation` becomes the route of presentation (an ED-only encounter, or an admission with an
+ED registration). Its former meaning, film taken during an ED stay, is kept as `film_during_ed`.
+
 ## Splits, timepoints and CIs
 
 - Splits are always **patient-level**. Options: `holdout`, stratified by patient label;

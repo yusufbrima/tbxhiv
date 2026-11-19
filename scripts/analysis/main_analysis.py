@@ -32,8 +32,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-B = int(os.environ.get("PAPERB_BOOT", 2000))
-B_SUB = min(B, 1000)
+B = int(os.environ.get("ANALYSIS_BOOT", 2000))
+B_SUB = B
 
 
 def run_dirs(path: Path) -> list[Path]:

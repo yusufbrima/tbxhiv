@@ -95,7 +95,7 @@ def main() -> None:
                     )
             point = cal_stats(y, p)
             boots = []
-            for _ in range(500):
+            for _ in range(2000):
                 take = np.concatenate(
                     [groups[i] for i in rng.integers(0, len(groups), len(groups))]
                 )

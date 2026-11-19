@@ -31,8 +31,8 @@ split:                                # shared MIMIC patient split (selection/de
 
 model:
   name: xgboost
-  params: {n_estimators: 500, max_depth: 4, learning_rate: 0.0508, subsample: 0.656, colsample_bytree: 0.862,
-           min_child_weight: 1.25, reg_lambda: 18.66}   # tuned on dev_split val (mimic_ehr_tuned, 30 trials)
+  params: {n_estimators: 300, max_depth: 8, learning_rate: 0.0129, subsample: 0.944, colsample_bytree: 0.391,
+           min_child_weight: 3.304, reg_lambda: 1.866}   # 30-trial search on this cohort's validation patients (configs/pneumonia/ehr_xgb_tune.yaml)
 
 evaluation: {n_bootstrap: 1000}
 subgroups:

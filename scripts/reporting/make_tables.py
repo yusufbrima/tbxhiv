@@ -103,6 +103,16 @@ SHORT = {"ehr": "EHR", "cxr": "CXR", "fusion": "Fusion", "stack": "Stacked",
          "ehr_nw": "EHR", "fusion_nw": "Fusion", "stack_nw": "Stacked"}  # fmt: skip
 
 
+def holm_text(hiv: pd.DataFrame) -> str:
+    """Holm-adjusted p values of the HIV contrasts, in contrast order."""
+    ordered = hiv.sort_values("p")
+    adjusted, running = {}, 0.0
+    for i, (_, r) in enumerate(ordered.iterrows()):
+        running = max(running, min(1.0, (len(ordered) - i) * r.p))
+        adjusted[r.contrast] = running
+    return ", ".join(f"{c} {pval(adjusted[c])}" for c in hiv.contrast)
+
+
 def gains(info: dict) -> str:
     comp = pd.read_csv(A / "comparisons.csv")
     hiv = pd.read_csv(A / "hiv.csv")
@@ -134,11 +144,11 @@ def gains(info: dict) -> str:
         "Paired differences in test AUROC, with patient-level bootstrap 95\\% CIs and two-sided $p$ "
         "(2,000 resamples; the stacker is refitted in every resample). EHR: XGBoost; CXR: image model; "
         "Fusion: end-to-end fusion; Stacked: stacked EHR + CXR. ``No workup'': EHR features without "
-        "microbiology orders, medications given, laboratory-order counts and clinical service (351 of "
+        "microbiology orders, medication orders, laboratory-order counts and clinical service (327 of "
         "2,253 features), for the EHR, fusion and stacked models alike. MDD: minimal detectable "
         "difference at 80\\% power ($2.8 \\times$ the bootstrap standard error). HIV-positive contrasts "
-        "B1--B3 were specified in advance; a difference counts if it is at least 0.02 with a CI "
-        "excluding zero."
+        "B1--B3 are exploratory (Section~\\ref{sec:methods}); a difference counts if it is at least 0.02 "
+        f"with a CI excluding zero after Holm correction (Holm-adjusted $p$: {holm_text(hiv)})."
     )
     return table(
         cap,
@@ -169,12 +179,13 @@ def subgroups() -> str:
     rows.pop()
     cap = (
         "Where the radiograph adds: stacked minus EHR XGBoost AUROC by pre-specified stratum (full "
-        "cohort, test encounters; route: ED or direct admission; ICU: radiograph taken in intensive "
+        "cohort, test encounters; route: through the ED, or direct admission without an ED registration; ICU: radiograph taken in intensive "
         "care; hours: from presentation to the radiograph; EHR: the EHR model's AUROC). Interaction: "
         "difference of gains between levels with a patient bootstrap 95\\% CI (ED minus direct "
         "admission, PA minus AP, ICU minus not, highest minus lowest tertile). Tertiles were cut on "
-        "training encounters (hours: 1.3 and 2.7; EHR completeness: share of laboratory and "
-        "vital-sign features recorded before the radiograph)."
+        "training encounters (hours: 1.3 and 2.7; EHR completeness: share of laboratory, triage, ED "
+        "vital-sign and intensive-care chart feature values present before the radiograph, cuts 0.24 "
+        "and 0.28)."
     )
     return table(
         cap,

@@ -1,0 +1,57 @@
+# Hyperparameter search for the EHR XGBoost on this cohort (trials train on dev_split train, score on val).
+# Dataset = the index-film cohort (scripts/cohort/build_index_cohort.py): one presentation film per
+# encounter; target label_cap (community-onset pneumonia). Run with TBMXAI_MIMIC_OUT pointing at it.
+name: pneumonia_ehr_xgb_tune_${target}
+seed: 42
+paths:
+  subset: ${TBMXAI_MIMIC_OUT:-~/data/tbmxai/mimic_subset}
+  output_root: ${TBMXAI_OUTPUT_ROOT:-~/tbmxai_runs}
+  target: ${TARGET:-label_cap}
+output_dir: ${output_root}
+
+data:
+  dataset: ${subset}                  # standard dataset written by `tbmxai mimic build` (dataset.yaml)
+  label_column: ${target}
+  use: [tabular, images]              # one sample per frontal image for every model; add `reports` with care
+                                      # (reports describe the image: report-derived targets would leak)
+
+view:
+  modalities: [tabular]
+  metadata_columns: [sex, age_group, race, insurance, hiv_prior, label_hiv, encounter_type, dev_split, ed_presentation, index_view, icu_at_film, hours_from_presentation]
+  index_policy: all                   # all | first | last | random — one prediction timepoint per patient
+  index_time_column: study_time       # prediction timepoint = CXR time (features use only data before it)
+
+split:                                # shared MIMIC patient split (selection/dev_split.csv):
+  name: predefined                    # the same test patients for every model, and never seen
+  params: {column: dev_split}         # by supervised pretraining (tbmxai pretrain)
+  # Temporal validation instead (year_group is shifted per patient but era-preserving):
+  # name: temporal
+  # params: {column: year_group, val_start: "2014 - 2016", test_start: "2017 - 2019", strict: true}
+
+model:
+  name: xgboost
+  params: {n_estimators: 500, max_depth: 4, learning_rate: 0.0508, subsample: 0.656, colsample_bytree: 0.862,
+           min_child_weight: 1.25, reg_lambda: 18.66}   # starting values; the search below replaces them
+
+evaluation: {n_bootstrap: 1000}
+subgroups:
+  columns: [sex, age_group, encounter_type, ed_presentation, index_view, icu_at_film]
+  min_size: 30
+explain:
+  methods: []
+reporting: {writers: [json, tables, markdown, html], table_format: both}
+
+tuning:
+  enabled: true
+  n_trials: 30
+  timeout_minutes: 480
+  metric: auroc
+  sampler: tpe
+  search_space:
+    model.params.n_estimators:     {type: int, low: 200, high: 1200, step: 100}
+    model.params.max_depth:        {type: int, low: 3, high: 8}
+    model.params.learning_rate:    {type: float, low: 0.01, high: 0.2, log: true}
+    model.params.subsample:        {type: float, low: 0.6, high: 1.0}
+    model.params.colsample_bytree: {type: float, low: 0.3, high: 1.0}
+    model.params.min_child_weight: {type: float, low: 1.0, high: 20.0, log: true}
+    model.params.reg_lambda:       {type: float, low: 0.1, high: 20.0, log: true}

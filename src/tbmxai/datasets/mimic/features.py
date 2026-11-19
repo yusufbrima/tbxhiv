@@ -92,10 +92,19 @@ def _flags(long: pd.DataFrame, key: str, prefix: str, top_n: int | None) -> pd.D
 
 @FEATURE_GROUPS.register("demographics")
 class DemographicsFeatures(FeatureGroup):
-    """Sex, age at study, race group, language (patient-level, time-invariant)."""
+    """Sex, age at study, race group, language.
+
+    Args:
+        at_study_time: Take race and language from admissions that started before the study.
+            The default uses every admission of the patient, including later ones.
+    """
 
     prefix = "demo"
     tables = ("patients", "admissions")
+
+    def __init__(self, at_study_time: bool = False) -> None:
+        super().__init__()
+        self.at_study_time = at_study_time
 
     RACE_GROUPS: ClassVar[dict[str, str]] = {
         "WHITE": "white",
@@ -130,24 +139,30 @@ class DemographicsFeatures(FeatureGroup):
         )
         # Most frequent recorded race / language per patient (patient attributes).
         adm["race_group"] = adm["race"].map(self.race_group)
-        known = adm[adm["race_group"] != "unknown"]
-        race = known.groupby("subject_id")["race_group"].agg(lambda x: x.mode().iat[0])
-        lang = (
-            adm.dropna(subset=["language"])
-            .groupby("subject_id")["language"]
-            .agg(lambda x: x.mode().iat[0])
-        )
         out = s.merge(pat, on="subject_id", how="left")
+        key = "subject_id"
+        if self.at_study_time:
+            adm["admittime"] = pd.to_datetime(adm["admittime"])
+            adm = adm.merge(s[["subject_id", "study_id", "study_time"]], on="subject_id")
+            adm = adm[adm["admittime"] < adm["study_time"]]
+            key = "study_id"
+        known = adm[adm["race_group"] != "unknown"]
+        race = known.groupby(key)["race_group"].agg(lambda x: x.mode().iat[0])
+        lang = (
+            adm.dropna(subset=["language"]).groupby(key)["language"].agg(lambda x: x.mode().iat[0])
+        )
         age = out["anchor_age"] + (out["study_time"].dt.year - out["anchor_year"])
         res = pd.DataFrame(
             {
                 "study_id": out["study_id"],
                 "demo_sex": out["gender"],
                 "demo_age": age.astype(float),
-                "demo_race": out["subject_id"].map(race).fillna("unknown"),
-                "demo_language_english": (out["subject_id"].map(lang).str.upper() == "ENGLISH")
+                "demo_race": out[key].map(race).astype(object).fillna("unknown"),
+                "demo_language_english": (
+                    out[key].map(lang).astype("string").str.upper() == "ENGLISH"
+                )
                 .astype(float)
-                .where(out["subject_id"].map(lang).notna()),
+                .where(out[key].map(lang).notna()),
                 "demo_anchor_year_group": out["anchor_year_group"],
             }
         )
@@ -163,10 +178,20 @@ class DemographicsFeatures(FeatureGroup):
 
 @FEATURE_GROUPS.register("encounter")
 class EncounterFeatures(FeatureGroup):
-    """Encounter context at study time: type, admission attributes, timing, ICU status."""
+    """Encounter context at study time: type, admission attributes, timing, ICU status.
+
+    Args:
+        at_study_time: Treat a study taken before the admission time as an ED study: its
+            encounter type is ``ed`` and the admission attributes are missing, because the
+            admission has not happened yet. The default reads them from the admission record.
+    """
 
     prefix = "enc"
     tables = ("admissions",)
+
+    def __init__(self, at_study_time: bool = False) -> None:
+        super().__init__()
+        self.at_study_time = at_study_time
 
     def extract(self, studies: pd.DataFrame, tables: MimicTables) -> pd.DataFrame:
         s = studies[
@@ -182,14 +207,19 @@ class EncounterFeatures(FeatureGroup):
         ].copy()
         hadm = s.dropna(subset=["hadm_id"])[["hadm_id"]].astype("int64").drop_duplicates()
         adm = tables.query(
-            f"""SELECT a.hadm_id, a.admission_type, a.admission_location, a.insurance,
-                       a.marital_status
+            f"""SELECT a.hadm_id, a.admittime, a.admission_type, a.admission_location,
+                       a.insurance, a.marital_status
             FROM {tables.scan("admissions")} a WHERE a.hadm_id IN (SELECT hadm_id FROM h)""",
             h=hadm,
         )
         s["hadm_id"] = pd.to_numeric(s["hadm_id"], errors="coerce").astype("Int64")
         adm["hadm_id"] = adm["hadm_id"].astype("Int64")
         out = s.merge(adm, on="hadm_id", how="left")
+        if self.at_study_time:
+            early = out["study_time"] < pd.to_datetime(out["admittime"])
+            attrs = ["admission_type", "admission_location", "insurance", "marital_status"]
+            out[attrs] = out[attrs].astype(object).where(~early, None)
+            out["encounter_type"] = out["encounter_type"].where(~early, "ed")
         res = pd.DataFrame(
             {
                 "study_id": out["study_id"],
@@ -318,6 +348,13 @@ class HistoryFeatures(FeatureGroup):
 # ------------------------------------------------------------- windowed numeric
 
 
+def _availability_sql(available_only: bool) -> str:
+    """Select-list fragment with the time a value became available (empty when unused)."""
+    if not available_only:
+        return ""
+    return "COALESCE(TRY_CAST(storetime AS TIMESTAMP), charttime) AS avail,"
+
+
 class WindowedNumericGroup(FeatureGroup):
     """Aggregate time-stamped numeric events in ``[study_time - lookback, study_time)``.
 
@@ -328,8 +365,12 @@ class WindowedNumericGroup(FeatureGroup):
         coverage_denominator: ``all`` studies, or only studies ``with_any`` event of this group
             (sensible for ICU/ED data that most studies lack).
         include: Restrict to these variable ids (``None`` = all).
+        available_only: Keep only values whose result was stored before the study
+            (``storetime``, or ``charttime`` when it is missing). The default keeps every value
+            charted before the study, including results that were not available yet.
     """
 
+    supports_availability: ClassVar[bool] = False
     default_lookback: ClassVar[float] = 48.0
     default_denominator: ClassVar[str] = "all"
 
@@ -340,8 +381,12 @@ class WindowedNumericGroup(FeatureGroup):
         min_coverage: float = 0.02,
         coverage_denominator: str | None = None,
         include: Sequence[int | str] | None = None,
+        available_only: bool = False,
     ) -> None:
         super().__init__()
+        if available_only and not self.supports_availability:
+            raise ValueError(f"{type(self).__name__} has no result time (storetime)")
+        self.available_only = available_only
         bad = set(aggregations) - set(AGGREGATIONS)
         if bad:
             raise ValueError(f"Unknown aggregations {bad}; choose from {AGGREGATIONS}")
@@ -373,6 +418,7 @@ class WindowedNumericGroup(FeatureGroup):
                    avg(e.v) AS mean, count(*) AS count
             FROM s JOIN e ON e.subject_id = s.subject_id
               AND e.t < s.study_time AND e.t >= s.window_start
+              {"AND e.avail < s.study_time" if self.available_only else ""}
             WHERE e.v IS NOT NULL {include}
             GROUP BY s.study_id, e.var
             """,
@@ -418,9 +464,12 @@ class LabFeatures(WindowedNumericGroup):
     prefix = "lab"
     tables = ("labevents", "d_labitems")
     default_lookback = 48.0
+    supports_availability = True
 
     def events_sql(self, tables: MimicTables) -> str:
-        return f"""SELECT subject_id, charttime AS t, CAST(itemid AS VARCHAR) AS var, valuenum AS v
+        avail = _availability_sql(self.available_only)
+        return f"""SELECT subject_id, charttime AS t, {avail} CAST(itemid AS VARCHAR) AS var,
+                          valuenum AS v
                    FROM {tables.scan("labevents")}
                    WHERE subject_id IN (SELECT subject_id FROM s)"""
 
@@ -439,9 +488,12 @@ class ICUChartFeatures(WindowedNumericGroup):
     tables = ("chartevents", "d_items")
     default_lookback = 24.0
     default_denominator = "with_any"
+    supports_availability = True
 
     def events_sql(self, tables: MimicTables) -> str:
-        return f"""SELECT subject_id, charttime AS t, CAST(itemid AS VARCHAR) AS var, valuenum AS v
+        avail = _availability_sql(self.available_only)
+        return f"""SELECT subject_id, charttime AS t, {avail} CAST(itemid AS VARCHAR) AS var,
+                          valuenum AS v
                    FROM {tables.scan("chartevents")}
                    WHERE subject_id IN (SELECT subject_id FROM s)"""
 
